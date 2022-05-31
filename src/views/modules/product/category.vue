@@ -1,5 +1,13 @@
 <template>
   <div>
+    <el-switch
+      v-model="draggable"
+      active-text="开启拖拽"
+      inactive-text="关闭拖拽"
+    >
+    </el-switch>
+    <el-button v-if="draggable" @click="batchSave">批量保存</el-button>
+    <el-button type="danger" @click="batchDelete">批量删除</el-button>
     <el-tree
       :data="menus"
       node-key="catId"
@@ -8,10 +16,11 @@
       :props="defaultProps"
       @node-click="handleNodeClick"
       :default-expanded-keys="expandedKey"
-      draggable
+      :draggable="draggable"
       :allow-drop="allowDrop"
       @node-drag-end="handleDragEnd"
       @node-drop="handleDrop"
+      ref="menuTree"
     >
       <span class="custom-tree-node" slot-scope="{ node, data }">
         <span>{{ node.label }}</span>
@@ -72,6 +81,8 @@ import { get } from "http";
 export default {
   data() {
     return {
+      pCid: [],
+      draggable: false,
       updateNodes: [],
       maxLevel: 0,
       title: "",
@@ -96,6 +107,49 @@ export default {
     };
   },
   methods: {
+    batchDelete() {
+      let catIds = [];
+      let checkedNodes = this.$refs.menuTree.getCheckedNodes();
+      for (let i = 0; i < checkedNodes.length; i++) {
+        catIds.push(checkedNodes[i].catId);
+      }
+      this.$confirm(`是否批量删除【${catIds}】菜单?`, "提示", {
+        confirmButtonText: "确定",
+        cancelButtonText: "取消",
+        type: "warning",
+      })
+        .then(() => {
+          this.$http({
+            url: this.$http.adornUrl("/product/category/delete"),
+            method: "post",
+            data: this.$http.adornData(catIds, false),
+          }).then(({ data }) => {
+            this.$message({
+              message: "菜单删除成功",
+              type: "success",
+            });
+            this.getMenus();
+          });
+        })
+        .catch(() => {});
+    },
+    batchSave() {
+      this.$http({
+        url: this.$http.adornUrl("/product/category/update/sort"),
+        method: "post",
+        data: this.$http.adornData(this.updateNodes, false),
+      }).then(({ data }) => {
+        this.$message({
+          message: 菜单顺序修改成功,
+          type: success,
+        });
+        this.getMenus();
+        this.expandedKey = this.pCid;
+        this.updateNodes = [];
+        this.maxLevel = 0;
+        this.pCid = [];
+      });
+    },
     handleDragEnd(draggingNode, dropNode, dropType, ev) {
       console.log("tree drag end: ", dropNode && dropNode.label, dropType);
     },
@@ -109,8 +163,15 @@ export default {
         pCid = dropNode.data.catId;
         siblings = dropNode.childNodes;
       }
+
+      this.pCid.push(pCid);
       for (let i = 0; i < siblings.length; i++) {
         if (siblings[i].data.catId == draggingNode.data.catId) {
+          let catLevel = draggingNode.level;
+          if (siblings[i].level != draggingNode.level) {
+            catLevel = siblings[i].level;
+            this.updateChildNodeLevel(siblings[i]);
+          }
           this.updateNodes.push({
             catId: siblings[i].data.catId,
             sort: i,
@@ -121,9 +182,21 @@ export default {
         }
       }
     },
+    updateChildNodeLevel(node) {
+      if (node.childNodes.length > 0) {
+        for (let i = 0; i < node.childNodes[i].length; i++) {
+          var cNode = node.childNodes[i].data;
+          this.updateNodes.push({
+            catId: cNode.catId,
+            catLevel: node.childNodes[i].level,
+          });
+          this.updateChildNodeLevel(node.childNodes[i]);
+        }
+      }
+    },
     allowDrop(draggingNode, dropNode, type) {
       this.countNodeLevel(draggingNode.data);
-      let deep = this.maxLevel - draggingNode.data.catLevel + 1;
+      let deep = Math.abs(this.maxLevel - draggingNode.level) + 1;
       if (type === "inner") {
         return deep + dropNode.level <= 3;
       } else {
@@ -131,12 +204,15 @@ export default {
       }
     },
     countNodeLevel(draggingNode) {
-      if (draggingNode.children != null && draggingNode.children.length > 0) {
-        for (let i = 0; i < draggingNode.children.length; i++) {
-          if (draggingNode.children[i].catLevel > this.maxLevel) {
-            this.maxLevel = draggingNode.children[i].catLevel;
+      if (
+        draggingNode.childNodes != null &&
+        draggingNode.childNodes.length > 0
+      ) {
+        for (let i = 0; i < draggingNode.childNodes.length; i++) {
+          if (draggingNode.childNodes[i].level > this.maxLevel) {
+            this.maxLevel = draggingNode.childNodes[i].level;
           }
-          this.countNodeLevel(draggingNode.children[i]);
+          this.countNodeLevel(draggingNode.childNodes[i]);
         }
       }
     },
@@ -155,7 +231,7 @@ export default {
         this.category.parentCid = data.data.parentCid;
       });
     },
-    submitDate() {
+    submitData() {
       if (this.dialogType === "add") {
         this.addCategory();
       } else if (this.dialogType === "edit") {
@@ -167,7 +243,16 @@ export default {
         url: this.$http.adornUrl("/product/category/update"),
         method: "post",
         data: this.$http.adornData(this.category, false),
-      }).then(({ data }) => {});
+      }).then(({ data }) => {
+        this.$message({
+          message: "菜单修改成功",
+          type: "success",
+        });
+        this.dialogVisible = false;
+        this.getMenus();
+        this.expandedKey = [this.category.parentCid];
+      });
+      
     },
     addCategory() {
       var { catId, name, icon, productUnit } = this.category;
@@ -177,7 +262,7 @@ export default {
         data: this.$http.adornData({ catId, name, icon, productUnit }, false),
       }).then(({ data }) => {
         this.$message({
-          message: "菜单修改成功",
+          message: "菜谱添加成功",
           type: "success",
         });
         this.dialogVisible = false;
